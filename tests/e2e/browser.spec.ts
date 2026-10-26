@@ -1,0 +1,158 @@
+import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { unlink } from 'node:fs/promises';
+import path from 'node:path';
+const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
+const createdPosts: string[] = [];
+const createdUploads: string[] = [];
+let originalProfile: { id: string; name: string; username: string; bio: string; image: string | null } | undefined;
+test.afterEach(async ({ page }, info) => {
+  void page;
+  info.setTimeout(info.timeout + 30_000);
+  if (originalProfile) { const { id, ...data } = originalProfile; await db.user.update({ where: { id }, data }); originalProfile = undefined; }
+  await db.notification.deleteMany({ where: { postId: { in: createdPosts } } });
+  await db.post.deleteMany({ where: { id: { in: createdPosts } } });
+  createdPosts.length = 0;
+  for (const url of createdUploads) await unlink(path.join(process.cwd(), 'uploads', path.basename(url))).catch(() => {});
+  createdUploads.length = 0;
+});
+test.afterAll(async () => { await db.$disconnect(); });
+
+test('desktop user can publish, react, comment, bookmark, search, change theme and sign out', async ({ page }) => {
+  const content = `Browser connection ${randomUUID().slice(0, 8)}`;
+  await page.goto('/');
+  await page.getByLabel('Email address').fill('demo@gather.local');
+  await page.getByLabel('Password', { exact: true }).fill('GatherDemo123!');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /Your home feed/ })).toBeVisible();
+  await page.getByLabel('Write a post', { exact: true }).fill(content);
+  await page.getByRole('button', { name: 'Post', exact: true }).click();
+  let post = page.locator('article').filter({ hasText: content });
+  await expect(post).toBeVisible();
+  const ownTimeline = await (await page.request.get('/api/social?resource=feed')).json();
+  createdPosts.push(ownTimeline.posts.find((item: { content: string }) => item.content === content).id);
+  await post.getByRole('button', { name: 'Like post', exact: true }).click();
+  await expect(post.getByRole('button', { name: 'Unlike post', exact: true })).toBeVisible();
+  await post.getByRole('button', { name: 'Bookmark post', exact: true }).click();
+  await expect(post.getByRole('button', { name: 'Remove bookmark', exact: true })).toBeVisible();
+  await post.getByRole('button', { name: 'View comments', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /Conversation/ })).toBeVisible();
+  await page.getByLabel('Write a comment', { exact: true }).fill('A real browser comment');
+  await page.getByRole('button', { name: 'Post comment', exact: true }).click();
+  await expect(page.getByText('A real browser comment', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('A real browser comment', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Bookmarks', exact: true }).first().click();
+  post = page.locator('article').filter({ hasText: content });
+  await expect(post).toBeVisible();
+  await page.getByLabel('Search Gather', { exact: true }).fill(content);
+  await page.getByRole('button', { name: 'Search', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: /Find your people/ })).toBeVisible();
+  await expect(page.locator('article').filter({ hasText: content })).toBeVisible();
+  await page.getByRole('button', { name: 'Dark appearance', exact: true }).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.reload();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.getByRole('button', { name: 'Light appearance', exact: true }).click();
+  await page.getByRole('button', { name: 'My profile', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Alex Morgan', exact: true }).last()).toBeVisible();
+  await page.getByRole('button', { name: /^3 following$/ }).click();
+  await expect(page.getByRole('dialog', { name: 'Following', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog').getByText('Maya Chen', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /Make yourself at home/ })).toBeVisible();
+  const original = (await (await page.request.get('/api/social?resource=settings')).json()).user;
+  originalProfile = { id: original.id, name: original.name, username: original.username, bio: original.bio, image: original.image };
+  const avatar = await sharp({ create: { width: 32, height: 32, channels: 3, background: '#5268ec' } }).png().toBuffer();
+  try {
+    await page.getByLabel('Full name', { exact: true }).fill('Alex Browser');
+    await page.getByRole('textbox', { name: /^Bio/ }).fill('A profile saved from a real browser.');
+    await page.getByLabel('Upload profile photo', { exact: true }).setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: avatar });
+    await expect(page.getByRole('button', { name: 'Change photo', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await expect.poll(async () => (await (await page.request.get('/api/social?resource=settings')).json()).user.name).toBe('Alex Browser');
+    await page.reload();
+    await expect(page.getByLabel('Full name', { exact: true })).toHaveValue('Alex Browser');
+    await expect(page.getByRole('textbox', { name: /^Bio/ })).toHaveValue('A profile saved from a real browser.');
+    const saved = (await (await page.request.get('/api/social?resource=settings')).json()).user;
+    if (saved.image) createdUploads.push(saved.image);
+    expect(saved.image).toMatch(/^\/api\/media\/.*\.webp$/);
+  } finally {
+    await db.user.update({ where: { id: original.id }, data: { name: original.name, username: original.username, bio: original.bio, image: original.image } });
+    originalProfile = undefined;
+  }
+  await page.reload();
+  await page.getByRole('button', { name: 'Home feed', exact: true }).first().click();
+  post = page.locator('article').filter({ hasText: content });
+  await post.getByRole('button', { name: 'Post options', exact: true }).click();
+  await post.getByRole('button', { name: 'Edit post', exact: true }).click();
+  await post.getByLabel('Edit post text', { exact: true }).fill(`${content} edited`);
+  await post.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByText(`${content} edited`, { exact: true })).toBeVisible();
+  await post.getByRole('button', { name: 'Post options', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await post.getByRole('button', { name: 'Delete post', exact: true }).click();
+  await expect(page.getByText(`${content} edited`, { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+});
+
+test('mobile login and navigation stay within viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByLabel('Email address').fill('demo@gather.local');
+  await page.getByLabel('Password', { exact: true }).fill('GatherDemo123!');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /Your home feed/ })).toBeVisible();
+  const mobileNav = page.getByRole('navigation', { name: 'Mobile navigation' });
+  await mobileNav.getByRole('button', { name: 'Explore', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /A world of discovery/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await mobileNav.getByRole('button', { name: 'Create a post', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByLabel('Write a post', { exact: true })).toBeVisible();
+});
+
+test('administrator can review, dismiss and remove reported content', async ({ page, playwright }) => {
+  const origin = process.env.E2E_BASE_URL || 'http://localhost:3000';
+  const author = await playwright.request.newContext({ baseURL: origin, extraHTTPHeaders: { Origin: origin } });
+  const reporter = await playwright.request.newContext({ baseURL: origin, extraHTTPHeaders: { Origin: origin } });
+  let postId: string | undefined;
+  try {
+    expect((await author.post('/api/auth/sign-in/email', { data: { email: 'maya@gather.local', password: 'GatherDemo123!' } })).status()).toBe(200);
+    expect((await reporter.post('/api/auth/sign-in/email', { data: { email: 'theo@gather.local', password: 'GatherDemo123!' } })).status()).toBe(200);
+    const content = `Moderation browser ${randomUUID().slice(0, 8)}`;
+    const created = await author.post('/api/social', { data: { action: 'createPost', content } });
+    expect(created.status(), await created.text()).toBe(200);
+    postId = (await created.json()).post.id;
+    createdPosts.push(postId!);
+    const reason = `Review this isolated browser test ${randomUUID().slice(0, 8)}`;
+    expect((await reporter.post('/api/social', { data: { action: 'report', postId, reason } })).status()).toBe(200);
+    await page.goto('/');
+    await page.getByLabel('Email address').fill('admin@gather.local');
+    await page.getByLabel('Password', { exact: true }).fill('GatherAdmin123!');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('button', { name: 'Moderation', exact: true }).click();
+    const report = page.locator('section.report-card').filter({ hasText: reason });
+    await expect(report).toBeVisible();
+    await expect(report.getByText(content, { exact: true })).toBeVisible();
+    await report.getByRole('button', { name: 'Dismiss report', exact: true }).click();
+    await expect(report.locator('.badge')).toHaveText('RESOLVED');
+    const reason2 = `${reason} reopened`;
+    expect((await reporter.post('/api/social', { data: { action: 'report', postId, reason: reason2 } })).status()).toBe(200);
+    await page.reload();
+    const reopened = page.locator('section.report-card').filter({ hasText: reason2 });
+    await expect(reopened).toBeVisible();
+    page.once('dialog', dialog => dialog.accept());
+    await reopened.getByRole('button', { name: 'Remove post', exact: true }).click();
+    await expect(reopened).toHaveCount(0);
+    expect((await author.get(`/api/social?resource=post&postId=${postId}`)).status()).toBe(404);
+  } finally {
+    if (postId) await author.post('/api/social', { data: { action: 'deletePost', postId } });
+    await author.dispose(); await reporter.dispose();
+  }
+});

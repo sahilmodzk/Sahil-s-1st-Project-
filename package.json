@@ -1,0 +1,50 @@
+{
+  "name": "gather-social",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "npm run db:generate && next build --webpack",
+    "start": "next start --hostname 0.0.0.0",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --env-file=.env --import tsx --test tests/*.test.ts",
+    "test:e2e": "playwright test",
+    "db:generate": "node scripts/generate-client.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:seed": "node --env-file=.env --import tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "better-auth": "^1.6.0",
+    "lucide-react": "^0.577.0",
+    "next": "^16.2.0",
+    "nodemailer": "^10.2.1",
+    "pg": "^8.23.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sharp": "^0.35.5",
+    "zod": "^4.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@prisma/client-generator-js": "7.10.1",
+    "@prisma/driver-adapter-utils": "7.10.1",
+    "@prisma/internals": "7.10.1",
+    "@prisma/schema-engine-wasm": "8.1.0-1.d1b3f377ca835d73fd50954a5e22128b9ebdd6b8",
+    "@tailwindcss/postcss": "^4.2.0",
+    "@types/node": "^24.0.0",
+    "@types/nodemailer": "^7.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "dotenv": "^18.0.9",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.2.0",
+    "prisma": "7.10.1",
+    "tailwindcss": "^4.2.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.0"
+  }
+}
