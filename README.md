@@ -98,6 +98,34 @@ Railway can run this application, a PostgreSQL service, and a persistent upload 
 
 GitHub stores the source code; the Railway HTTPS domain is the website address to share. Adding or changing a custom domain also requires updating `BETTER_AUTH_URL` and redeploying. Keep database and upload-volume backups. This configuration prepares deployment; it does not create a Railway account, provision paid services, or verify external email delivery automatically.
 
+## Publish on Render
+
+Use a paid Docker web service with persistent disk storage, plus a PostgreSQL database. Review the current Render prices before creating either service.
+
+1. In the [Render dashboard](https://dashboard.render.com/), create a **Web Service** from this GitHub repository using the **Docker** runtime, or open your existing website service. Keep the committed Dockerfile startup command and note the service's region.
+2. Create a **Postgres** database in that same region. If needed, open the [database creation form](https://dashboard.render.com/new/database) directly. Wait until the database is available.
+3. Open the **database service → Connections** and copy the complete **Internal Database URL** with its copy button. Then open the **website service → Environment** and configure the values below. Paste the entire database URL without quotation marks. Setting a variable on the database service does not configure the website service.
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | The complete Internal Database URL copied from the database service |
+   | `BETTER_AUTH_SECRET` | An independent random secret of at least 32 characters; use the generation command in the Railway section above |
+   | `BETTER_AUTH_URL` | The website service's exact public HTTPS address shown by Render, with no path |
+   | `PORT` | `10000` |
+
+4. Attach a persistent disk to the web service at **`/app/uploads`** and set its health check path to **`/api/health`**. Use one web service instance with this local-file storage design. Uploaded files need this disk to survive deployment replacements.
+5. Save the environment and deploy the latest commit. Startup validates the settings, applies migrations, and starts the server. Do not run `db:seed` in production. Once healthy, open the public HTTPS address, register a new account, and verify login, an image upload, and a social interaction.
+
+Production password reset email requires the SMTP variables described above, a verified sender, and a Render plan that permits outbound connections to your SMTP provider. Test delivery before sharing the website.
+
+### Render database connection errors
+
+Always inspect the **latest deployment's** logs after saving environment changes and redeploying; an older failed deployment retains its original error. New startup logs include `Database URL validated (host: …)` after the URL passes syntax validation. This line shows the parsed hostname only and does not establish database connectivity.
+
+An error mentioning database server **`base`** can result from an incomplete value such as a database name: the PostgreSQL connection-string parser uses `base` as a fallback hostname. It does not prove a real server is named `base`. Copy the entire **Internal Database URL** again from the available database's **Connections** panel into the **website service's** `DATABASE_URL`, then save and redeploy. Ensure both services use the same Render region. Do not substitute the website address, database display name, or authentication secret.
+
+Never share the full database URL or an environment screenshot showing credentials. If connection still fails after the new validation line, share only the hostname and the remaining error message, with passwords and secrets removed.
+
 ## Deploy
 
 1. Provision PostgreSQL and durable upload storage. Back up both, and test restoration.
