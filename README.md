@@ -77,6 +77,27 @@ npm run test:e2e
 
 Browser tests use an already running server at `http://localhost:3000`; set `E2E_BASE_URL` to use another origin. Do not run tests against production data. A successful production build checks compilation; runtime database and SMTP connectivity must also be verified in the deployment environment.
 
+## Publish on Railway
+
+Railway can run this application, a PostgreSQL service, and a persistent upload volume in one project. Create an account at [railway.com](https://railway.com/) and check the current pricing before provisioning services; hosting may incur charges.
+
+1. Create a **New Project**, choose **Deploy from GitHub repo**, connect your GitHub account, and select `sahilmodzk/Sahil-s-1st-Project-` on the `main` branch. Railway should use the committed `Dockerfile` and `railway.toml`. No custom build or start command is required. The first deployment may fail until its database and variables are configured; continue with the next steps.
+2. In the same Railway project, add a **PostgreSQL** database service. In the application service's **Variables**, use **Add Reference** to reference the database service's `DATABASE_URL` as the application's `DATABASE_URL`. Use Railway's supplied connection settings rather than the local example credentials.
+3. Generate a new authentication secret in your local terminal:
+
+   ```powershell
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+   ```
+
+   Add that value to the application service's private variables as `BETTER_AUTH_SECRET`. Also set `PORT` to `3000`. Keep the secret stable across redeployments and do not commit it or send it in chat.
+4. Open the application's **Settings → Networking → Public Networking** and choose **Generate Domain**. Set the private variable `BETTER_AUTH_URL` to that complete HTTPS address, such as `https://your-app.up.railway.app`, with no path. If Railway asks for a target port, enter `3000`, matching the `PORT` variable above. The app listens on `0.0.0.0` and honors `PORT`.
+5. Attach a persistent **Volume** to the application service at **`/app/uploads`** before accepting image uploads. Keep one application replica with this local-file storage design. Without the volume, uploaded images can disappear when a deployment is replaced.
+6. Configure your email provider's `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM` variables. Confirm your Railway plan permits outbound SMTP to that provider and verify sender configuration. Password reset requires successful SMTP delivery in production; the local development outbox is disabled there.
+7. Deploy or redeploy after saving the settings. The container applies committed database migrations before starting the production server. The `/api/health` endpoint checks database connectivity for the configured deployment health check. Do not run `db:seed` on this production database.
+8. Once the deployment is healthy, open the generated HTTPS domain and create your own account. The public development demo accounts are not installed in production. Verify registration, login, image upload, a social interaction, and actual password reset email delivery before sharing the address.
+
+GitHub stores the source code; the Railway HTTPS domain is the website address to share. Adding or changing a custom domain also requires updating `BETTER_AUTH_URL` and redeploying. Keep database and upload-volume backups. This configuration prepares deployment; it does not create a Railway account, provision paid services, or verify external email delivery automatically.
+
 ## Deploy
 
 1. Provision PostgreSQL and durable upload storage. Back up both, and test restoration.
